@@ -1,0 +1,87 @@
+#!/usr/bin/env python
+# -*- python -*-
+#
+# puppet-nodes
+#
+# Tim Hawes <me@timhawes.com>
+# 1st May 2010
+#
+# An external node script for Puppet, using .ini style data.
+#
+
+import sys
+import yaml
+from ConfigParser import ConfigParser
+
+conf = ConfigParser()
+conf.read("/etc/puppet/nodes.conf")
+
+parameter_types = {}
+if conf.has_section("_parameters"):
+    for k, v in conf.items("_parameters"):
+        parameter_types[k] = v
+
+try:
+    hostname = sys.argv[1].lower()
+except IndexError:
+    sys.stderr.write("Usage: %s hostname\n" % (sys.argv[0]))
+    sys.exit(1)
+
+class NotFound(Exception):
+    def __init__(self, hostname):
+        self.hostname = hostname
+    
+def node_data(hostname):
+    classes = []
+    parameters = {}
+    environment = None
+
+    if conf.has_section(hostname):
+
+        if conf.has_option(hostname, "parent"):
+            parent = conf.get(hostname, "parent")
+            classes, parameters, environment = node_data(parent)
+
+        if conf.has_option(hostname, "classes"):
+            for c in conf.get(hostname, "classes").strip().split():
+                classes.append(c.lower())
+
+        if conf.has_option(hostname, "environment"):
+            environment = conf.get(hostname, "environment")
+
+        for k, v in conf.items(hostname):
+            if k.lower() in ["parent", "classes", "environment"]:
+                pass
+            else:
+                if parameter_types.has_key(k):
+                    if parameter_types[k] == 'list':
+                        parameters[k] = v.strip().split()
+                    elif parameter_types[k] == 'merge':
+                        if parameters.has_key(k):
+                            parameters[k] = parameters[k] + v.strip().split()
+                        else:
+                            parameters[k] = v.strip().split()
+                    else:
+                        parameters[k] = v
+                else:
+                    parameters[k] = v
+
+    else:
+        
+        raise NotFound(hostname)
+
+    return classes, parameters, environment
+
+try:
+    
+    classes, parameters, environment = node_data(hostname)
+
+    tmp = {}
+    if classes: tmp["classes"] = classes
+    if parameters: tmp["parameters"] = parameters
+    if environment: tmp["environment"] = environment
+    print yaml.dump(tmp)
+
+except NotFound, e:
+    sys.stderr.write("Node %s not found\n" % (e.hostname))
+    sys.exit(1)
